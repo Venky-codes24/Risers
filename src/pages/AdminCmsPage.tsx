@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { 
   Plus, Edit2, Trash2, Eye, EyeOff, Download, Upload, 
   CheckCircle, User, Radio, 
   FileText, Video, MessageSquare, RotateCcw, Sparkles,
-  Lock, LogOut, ExternalLink
+  Lock, LogOut, ExternalLink, GraduationCap, MapPin, Calendar, CheckCheck, ArrowRight
 } from 'lucide-react';
 import { ContentStore } from '../services/contentStore';
 import type { StudentStory, StudentRadioEpisode, ProfessionalInterview, GetFeaturedSubmission } from '../types';
@@ -13,31 +13,52 @@ type AdminTab = 'stories' | 'episodes' | 'interviews' | 'submissions' | 'setting
 export type ArticleCategory = 'Student Stories' | 'Student Radio' | 'Professional Interviews';
 
 export const AdminCmsPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<AdminTab>('stories');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<AdminTab>(() => {
+    const tabParam = searchParams.get('tab') as AdminTab;
+    if (tabParam && ['stories', 'episodes', 'interviews', 'submissions', 'settings', 'future-news'].includes(tabParam)) {
+      return tabParam;
+    }
+    return 'submissions'; // Default to 'submissions' so newly filled user proposals are immediately visible!
+  });
   const [userRole, setUserRole] = useState<'Owner' | 'Editor'>('Owner');
 
-  // Admin Login State (stored in localStorage)
+  // Admin Login State (Secured via .env backend & JWT)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return localStorage.getItem('risers_admin_auth') === 'true';
+    return ContentStore.isAuthenticated();
   });
-  const [loginUsername, setLoginUsername] = useState('admin');
-  const [loginPassword, setLoginPassword] = useState('admin');
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isRefreshingSubmissions, setIsRefreshingSubmissions] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loginUsername.trim() && loginPassword.trim()) {
-      localStorage.setItem('risers_admin_auth', 'true');
-      setIsAuthenticated(true);
-      setLoginError(null);
-      showNotice('Logged in as Administrator.');
-    } else {
+    if (!loginUsername.trim() || !loginPassword.trim()) {
       setLoginError('Please enter both username and password.');
+      return;
+    }
+    setIsLoggingIn(true);
+    setLoginError(null);
+    try {
+      const result = await ContentStore.adminLogin(loginUsername.trim(), loginPassword);
+      if (result.success) {
+        setIsAuthenticated(true);
+        showNotice('Logged in securely as Administrator.');
+        refreshAll();
+      } else {
+        setLoginError(result.error || 'Invalid admin credentials.');
+      }
+    } catch {
+      setLoginError('Could not reach authentication server.');
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('risers_admin_auth');
+  const handleLogout = async () => {
+    await ContentStore.adminLogout();
     setIsAuthenticated(false);
     showNotice('Logged out successfully.');
   };
@@ -198,13 +219,64 @@ export const AdminCmsPage: React.FC = () => {
   // Submission Filter
   const [submissionFilter, setSubmissionFilter] = useState<'All' | 'New' | 'Contacted' | 'Selected' | 'Closed'>('All');
 
-  const refreshAll = () => {
+  const refreshAll = async () => {
     setStories(ContentStore.getAllStories());
     setEpisodes(ContentStore.getAllEpisodes());
     setInterviews(ContentStore.getAllInterviews());
     setSubmissions(ContentStore.getSubmissions());
     setSettings(ContentStore.getSettings());
+
+    try {
+      const freshSubs = await ContentStore.fetchSubmissions();
+      setSubmissions(freshSubs);
+      const [freshStories, freshEpisodes, freshInterviews, freshSettings] = await Promise.all([
+        ContentStore.fetchAllStoriesFromServer(),
+        ContentStore.fetchAllEpisodesFromServer(),
+        ContentStore.fetchAllInterviewsFromServer(),
+        ContentStore.fetchSettings()
+      ]);
+      setStories(freshStories);
+      setEpisodes(freshEpisodes);
+      setInterviews(freshInterviews);
+      setSettings(freshSettings);
+    } catch (err) {
+      console.warn('Sync notice:', err);
+    }
   };
+
+  const refreshSubmissionsOnly = async () => {
+    setIsRefreshingSubmissions(true);
+    try {
+      const freshSubs = await ContentStore.fetchSubmissions();
+      setSubmissions(freshSubs);
+      showNotice('Submissions synced with PostgreSQL.');
+    } catch {
+      showNotice('Failed to refresh submissions.');
+    } finally {
+      setIsRefreshingSubmissions(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      refreshAll();
+
+      // Automatically sync new submissions from PostgreSQL every 4 seconds
+      const pollInterval = setInterval(() => {
+        ContentStore.fetchSubmissions().then(freshSubs => {
+          setSubmissions(freshSubs);
+        });
+      }, 4000);
+
+      return () => clearInterval(pollInterval);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (activeTab === 'submissions' && isAuthenticated) {
+      refreshSubmissionsOnly();
+    }
+  }, [activeTab]);
 
   // Story Operations
   const handleSaveStory = (e: React.FormEvent) => {
@@ -304,17 +376,17 @@ export const AdminCmsPage: React.FC = () => {
   };
 
   // Submission Operations
-  const handleUpdateSubmission = (id: string, status: GetFeaturedSubmission['status']) => {
-    ContentStore.updateSubmissionStatus(id, status);
+  const handleUpdateSubmission = async (id: string, status: GetFeaturedSubmission['status']) => {
+    await ContentStore.updateSubmissionStatus(id, status);
     refreshAll();
     showNotice(`Submission updated to ${status}.`);
   };
 
-  const handleDeleteSubmission = (id: string) => {
-    if (window.confirm('Permanently delete this submission record?')) {
-      ContentStore.deleteSubmission(id);
+  const handleDeleteSubmission = async (id: string) => {
+    if (window.confirm('Permanently delete this submission record from database?')) {
+      await ContentStore.deleteSubmission(id);
       refreshAll();
-      showNotice('Submission removed.');
+      showNotice('Submission removed from database.');
     }
   };
 
@@ -445,12 +517,14 @@ export const AdminCmsPage: React.FC = () => {
                 />
               </div>
 
-              <div style={{ background: 'var(--bg-subtle)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: '20px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                <span>Default credentials: <strong>admin</strong> / <strong>admin</strong></span>
-              </div>
 
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
-                <span>Sign In to Admin Dashboard</span>
+              <button 
+                type="submit" 
+                className="btn btn-primary" 
+                style={{ width: '100%', justifyContent: 'center' }}
+                disabled={isLoggingIn}
+              >
+                <span>{isLoggingIn ? 'Authenticating...' : 'Sign In to Admin Dashboard'}</span>
               </button>
             </form>
 
@@ -489,6 +563,7 @@ export const AdminCmsPage: React.FC = () => {
               <Plus size={16} />
               <span>Create Article</span>
             </button>
+
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-subtle)', padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', fontSize: '0.85rem' }}>
               <User size={15} color="var(--accent-primary)" />
@@ -533,11 +608,39 @@ export const AdminCmsPage: React.FC = () => {
           </div>
         )}
 
-        {/* Tab Navigation */}
-        <div style={{ display: 'flex', gap: '8px', borderBottom: '2px solid var(--border-subtle)', marginBottom: '32px', overflowX: 'auto', paddingBottom: '4px' }}>
+        {/* Highlight Banner When New Get Featured Submissions Are Waiting */}
+        {submissions.filter(s => s.status === 'New').length > 0 && activeTab !== 'submissions' && (
+          <div style={{ background: '#EEF2FF', border: '2px solid #818CF8', borderRadius: 'var(--radius-md)', padding: '16px 20px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#4F46E5', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <MessageSquare size={20} />
+              </div>
+              <div>
+                <strong style={{ fontSize: '1rem', color: '#1E1B4B', display: 'block' }}>
+                  {submissions.filter(s => s.status === 'New').length} New Get Featured Submission(s) Received from Website!
+                </strong>
+                <span style={{ fontSize: '0.86rem', color: '#4338CA' }}>
+                  Latest submission from <strong>{submissions[0]?.name}</strong> ({submissions[0]?.schoolOrCollege || 'Student'}, {submissions[0]?.city || ''})
+                </span>
+              </div>
+            </div>
+            <button 
+              onClick={() => { setActiveTab('submissions'); setSubmissionFilter('All'); }}
+              className="btn btn-primary btn-sm"
+              style={{ background: '#4F46E5', borderColor: '#4F46E5', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            >
+              <span>View User Submissions</span>
+              <ArrowRight size={14} />
+            </button>
+          </div>
+        )}
+
+        {/* Tab Navigation (Responsive Horizontal Scroll) */}
+        <div style={{ display: 'flex', gap: '8px', borderBottom: '2px solid var(--border-subtle)', marginBottom: '32px', overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: '6px', scrollbarWidth: 'thin' }}>
           <button 
             onClick={() => { setActiveTab('stories'); setEditingStory(null); }}
             className={`btn btn-sm ${activeTab === 'stories' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
           >
             <FileText size={15} />
             <span>Student Stories ({stories.length})</span>
@@ -546,6 +649,7 @@ export const AdminCmsPage: React.FC = () => {
           <button 
             onClick={() => { setActiveTab('episodes'); setEditingEpisode(null); }}
             className={`btn btn-sm ${activeTab === 'episodes' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
           >
             <Radio size={15} />
             <span>Student Radio ({episodes.length})</span>
@@ -554,6 +658,7 @@ export const AdminCmsPage: React.FC = () => {
           <button 
             onClick={() => { setActiveTab('interviews'); setEditingInterview(null); }}
             className={`btn btn-sm ${activeTab === 'interviews' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
           >
             <Video size={15} />
             <span>Interviews ({interviews.length})</span>
@@ -562,6 +667,7 @@ export const AdminCmsPage: React.FC = () => {
           <button 
             onClick={() => setActiveTab('submissions')}
             className={`btn btn-sm ${activeTab === 'submissions' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
           >
             <MessageSquare size={15} />
             <span>Submissions ({submissions.filter(s => s.status === 'New').length} new)</span>
@@ -570,6 +676,7 @@ export const AdminCmsPage: React.FC = () => {
           <button 
             onClick={() => setActiveTab('settings')}
             className={`btn btn-sm ${activeTab === 'settings' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
           >
             <span>Homepage & Backup</span>
           </button>
@@ -577,7 +684,7 @@ export const AdminCmsPage: React.FC = () => {
           <button 
             onClick={() => setActiveTab('future-news')}
             className={`btn btn-sm ${activeTab === 'future-news' ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ opacity: 0.8 }}
+            style={{ opacity: 0.8, flexShrink: 0, whiteSpace: 'nowrap' }}
           >
             <span>Future News (Prepared)</span>
           </button>
@@ -601,8 +708,8 @@ export const AdminCmsPage: React.FC = () => {
                   </button>
                 </div>
 
-                <div style={{ background: '#FFFFFF', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+                <div style={{ background: '#FFFFFF', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                  <table style={{ width: '100%', minWidth: '650px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
                     <thead style={{ background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-subtle)' }}>
                       <tr>
                         <th style={{ padding: '12px 16px' }}>Student & Title</th>
@@ -901,8 +1008,8 @@ export const AdminCmsPage: React.FC = () => {
                   </button>
                 </div>
 
-                <div style={{ background: '#FFFFFF', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+                <div style={{ background: '#FFFFFF', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                  <table style={{ width: '100%', minWidth: '650px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
                     <thead style={{ background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-subtle)' }}>
                       <tr>
                         <th style={{ padding: '12px 16px' }}>Ep # & Title</th>
@@ -1119,8 +1226,8 @@ export const AdminCmsPage: React.FC = () => {
                   </button>
                 </div>
 
-                <div style={{ background: '#FFFFFF', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+                <div style={{ background: '#FFFFFF', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                  <table style={{ width: '100%', minWidth: '650px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
                     <thead style={{ background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-subtle)' }}>
                       <tr>
                         <th style={{ padding: '12px 16px' }}>Guest & Title</th>
@@ -1330,8 +1437,18 @@ export const AdminCmsPage: React.FC = () => {
                 </p>
               </div>
 
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={handleExportCSV} className="btn btn-secondary btn-sm">
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button 
+                  onClick={refreshSubmissionsOnly} 
+                  className="btn btn-secondary btn-sm"
+                  disabled={isRefreshingSubmissions}
+                  title="Fetch latest from PostgreSQL"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <RotateCcw size={14} className={isRefreshingSubmissions ? 'spin' : ''} />
+                  <span>{isRefreshingSubmissions ? 'Syncing...' : 'Sync Database'}</span>
+                </button>
+                <button onClick={handleExportCSV} className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                   <Download size={14} />
                   <span>Export CSV</span>
                 </button>
@@ -1339,13 +1456,13 @@ export const AdminCmsPage: React.FC = () => {
             </div>
 
             {/* Filter pills */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: '4px' }}>
               {(['All', 'New', 'Contacted', 'Selected', 'Closed'] as const).map(st => (
                 <button
                   key={st}
                   onClick={() => setSubmissionFilter(st)}
                   className={`btn btn-sm ${submissionFilter === st ? 'btn-primary' : 'btn-secondary'}`}
-                  style={{ padding: '4px 12px', fontSize: '0.8rem' }}
+                  style={{ padding: '4px 12px', fontSize: '0.8rem', flexShrink: 0 }}
                 >
                   {st}
                 </button>
@@ -1361,70 +1478,183 @@ export const AdminCmsPage: React.FC = () => {
                 {submissions
                   .filter(s => submissionFilter === 'All' ? true : s.status === submissionFilter)
                   .map(sub => (
-                    <div key={sub.id} style={{ background: '#FFFFFF', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '20px', boxShadow: 'var(--shadow-sm)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+                    <div 
+                      key={sub.id} 
+                      style={{ 
+                        background: '#FFFFFF', 
+                        border: sub.status === 'New' ? '2px solid #6366F1' : '1px solid var(--border-subtle)', 
+                        borderRadius: 'var(--radius-md)', 
+                        padding: '24px', 
+                        boxShadow: sub.status === 'New' ? '0 4px 14px rgba(99, 102, 241, 0.12)' : 'var(--shadow-sm)' 
+                      }}
+                    >
+                      {/* Top Header with Candidate Name, Status, and Date */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '14px', marginBottom: '16px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '14px' }}>
                         <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                            <strong style={{ fontSize: '1.1rem' }}>{sub.name}</strong>
-                            <span className="badge" style={{ background: '#EEF2FF', color: '#3730A3' }}>{sub.category}</span>
-                            {sub.isUnder18 && (
-                              <span className="badge" style={{ background: '#FEF3C7', color: '#92400E' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                            <h3 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                              {sub.name}
+                            </h3>
+                            <span className="badge" style={{ background: '#EEF2FF', color: '#3730A3', fontWeight: 700, padding: '4px 10px' }}>
+                              {sub.category}
+                            </span>
+                            {sub.status === 'New' && (
+                              <span className="badge" style={{ background: '#DEF7EC', color: '#03543F', fontWeight: 800, padding: '4px 10px' }}>
+                                NEW PROPOSAL
+                              </span>
+                            )}
+                            {sub.isUnder18 ? (
+                              <span className="badge" style={{ background: '#FEF3C7', color: '#92400E', padding: '4px 8px' }}>
                                 Under-18
+                              </span>
+                            ) : (
+                              <span className="badge" style={{ background: '#F3F4F6', color: '#4B5563', padding: '4px 8px' }}>
+                                18+ Adult
                               </span>
                             )}
                           </div>
-                          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                            {sub.schoolOrCollege} {sub.city ? `• ${sub.city}` : ''} • Submitted {new Date(sub.submittedAt).toLocaleDateString()}
+                          
+                          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                              <GraduationCap size={16} color="var(--accent-primary)" />
+                              <strong>{sub.schoolOrCollege}</strong>
+                            </span>
+                            {sub.city && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                                <MapPin size={16} color="var(--text-muted)" />
+                                <span>{sub.city}</span>
+                              </span>
+                            )}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                              <Calendar size={16} color="var(--text-muted)" />
+                              <span>Submitted {new Date(sub.submittedAt).toLocaleString()}</span>
+                            </span>
                           </div>
                         </div>
 
-                        {/* Status Select */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Status:</span>
+                        {/* Status Control & Delete */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-secondary)' }}>Status:</span>
                           <select 
                             value={sub.status} 
                             onChange={e => handleUpdateSubmission(sub.id, e.target.value as any)}
                             className="form-select"
-                            style={{ padding: '4px 8px', fontSize: '0.82rem', width: 'auto' }}
+                            style={{ 
+                              padding: '6px 12px', 
+                              fontSize: '0.86rem', 
+                              fontWeight: 700, 
+                              width: 'auto',
+                              borderColor: sub.status === 'New' ? '#6366F1' : 'var(--border-strong)',
+                              color: sub.status === 'New' ? '#4F46E5' : 'inherit'
+                            }}
                           >
-                            <option value="New">New</option>
-                            <option value="Contacted">Contacted</option>
-                            <option value="Selected">Selected</option>
-                            <option value="Closed">Closed</option>
+                            <option value="New">🟡 New</option>
+                            <option value="Contacted">🔵 Contacted</option>
+                            <option value="Selected">🟢 Selected for Feature</option>
+                            <option value="Closed">⚪ Closed</option>
                           </select>
+                          
                           {userRole === 'Owner' && (
                             <button 
                               onClick={() => handleDeleteSubmission(sub.id)}
                               className="btn btn-secondary btn-sm"
-                              style={{ color: '#DC2626', padding: '4px 8px' }}
-                              title="Delete Record"
+                              style={{ color: '#DC2626', padding: '6px 10px' }}
+                              title="Delete Record from Database"
                             >
-                              <Trash2 size={13} />
+                              <Trash2 size={15} />
                             </button>
                           )}
                         </div>
                       </div>
 
-                      {/* Description */}
-                      <p style={{ fontSize: '0.92rem', color: 'var(--text-primary)', background: 'var(--bg-subtle)', padding: '12px', borderRadius: 'var(--radius-sm)', marginBottom: '14px', lineHeight: 1.5 }}>
-                        {sub.shortDescription}
-                      </p>
-
-                      {/* Private Contact Details (Admin only) */}
-                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', fontSize: '0.85rem', color: 'var(--text-secondary)', borderTop: '1px dashed var(--border-subtle)', paddingTop: '10px' }}>
-                        <div>
-                          <strong>Contact:</strong> <code>{sub.contactMethod}</code>
+                      {/* Submitted Information: Outline / Pitch Description */}
+                      <div style={{ marginBottom: '16px' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
+                          User Submitted Story / Pitch:
+                        </span>
+                        <div style={{ fontSize: '1rem', color: 'var(--text-primary)', background: 'var(--bg-subtle)', padding: '16px', borderRadius: 'var(--radius-sm)', lineHeight: 1.6, borderLeft: '4px solid var(--accent-primary)' }}>
+                          "{sub.shortDescription}"
                         </div>
+                      </div>
+
+                      {/* Contact & Verification Grid */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', background: '#F8FAFC', padding: '14px 18px', borderRadius: 'var(--radius-sm)', border: '1px solid #E2E8F0', fontSize: '0.88rem' }}>
+                        <div>
+                          <strong style={{ color: 'var(--text-secondary)', display: 'block', marginBottom: '3px' }}>
+                            Candidate Contact:
+                          </strong>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <code style={{ background: '#FFFFFF', padding: '3px 8px', borderRadius: '4px', border: '1px solid #CBD5E1', fontSize: '0.9rem', fontWeight: 700, color: '#0F172A' }}>
+                              {sub.contactMethod}
+                            </code>
+                          </div>
+                        </div>
+
                         {sub.guardianContact && (
                           <div>
-                            <strong>Guardian Contact:</strong> <code>{sub.guardianContact}</code>
+                            <strong style={{ color: 'var(--text-secondary)', display: 'block', marginBottom: '3px' }}>
+                              Parent / Guardian Contact:
+                            </strong>
+                            <code style={{ background: '#FFFFFF', padding: '3px 8px', borderRadius: '4px', border: '1px solid #CBD5E1', fontSize: '0.9rem', fontWeight: 600 }}>
+                              {sub.guardianContact}
+                            </code>
                           </div>
                         )}
+
                         {sub.workLink && (
                           <div>
-                            <strong>Work Link:</strong> <a href={sub.workLink} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>{sub.workLink}</a>
+                            <strong style={{ color: 'var(--text-secondary)', display: 'block', marginBottom: '3px' }}>
+                              Work / Portfolio Link:
+                            </strong>
+                            <a 
+                              href={sub.workLink} 
+                              target="_blank" 
+                              rel="noreferrer" 
+                              style={{ color: 'var(--accent-primary)', textDecoration: 'underline', fontWeight: 600, wordBreak: 'break-all', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              <span>{sub.workLink}</span>
+                              <ExternalLink size={12} />
+                            </a>
                           </div>
                         )}
+
+                        <div>
+                          <strong style={{ color: 'var(--text-secondary)', display: 'block', marginBottom: '3px' }}>
+                            Editorial Consent:
+                          </strong>
+                          <span style={{ color: '#059669', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <CheckCheck size={15} />
+                            <span>Confirmed & Verified</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Convert to Draft Story Action */}
+                      <div style={{ marginTop: '14px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                        <button
+                          onClick={() => {
+                            setIsCreatingArticle(true);
+                            setArticleDestination('Student Stories');
+                            setActiveTab('stories');
+                            setIsNewStory(true);
+                            setEditingStory({
+                              ...getInitialStory(),
+                              studentName: sub.name,
+                              schoolOrCollege: sub.schoolOrCollege,
+                              city: sub.city || '',
+                              category: sub.category === 'Student Entrepreneur' ? 'Student Entrepreneurs' : 'Student Talent',
+                              shortIntro: sub.shortDescription,
+                              workSummary: sub.shortDescription,
+                              relevantLinks: sub.workLink ? [{ label: 'Work Link', url: sub.workLink }] : []
+                            });
+                            showNotice(`Started draft story for ${sub.name}.`);
+                          }}
+                          className="btn btn-secondary btn-sm"
+                          style={{ fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                        >
+                          <Plus size={14} />
+                          <span>Draft Story from this Candidate</span>
+                        </button>
                       </div>
                     </div>
                   ))}

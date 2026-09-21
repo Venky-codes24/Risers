@@ -204,6 +204,11 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   align-items: center;
   gap: 12px;
 }
+@media (max-width: 560px) {
+  .nav-cta-desktop {
+    display: none !important;
+  }
+}
 
 /* Button Component Styles */
 .btn {
@@ -697,15 +702,186 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   }
 }
 
-/* Responsive Utilities */
+/* ============================================================
+   RESPONSIVE & MOBILE DESIGN ENHANCEMENTS
+   Ensures seamless experience across 320px to 4K displays
+   ============================================================ */
+
+/* Spin Animation Utility for Database Sync & Async Actions */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Responsive Table Container */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+/* Tablet & Mobile Adjustments (<= 768px) */
+@media (max-width: 768px) {
+  .hero-section {
+    padding: 44px 0 52px;
+  }
+
+  .hero-tagline {
+    font-size: clamp(1.85rem, 6.5vw, 2.6rem);
+    line-height: 1.2;
+    margin-bottom: 16px;
+  }
+
+  .hero-purpose {
+    font-size: 1.05rem;
+    margin-bottom: 10px;
+  }
+
+  .hero-desc {
+    font-size: 0.98rem;
+    margin-bottom: 24px;
+    line-height: 1.6;
+  }
+
+  .section {
+    padding: 48px 0;
+  }
+
+  .section-title {
+    font-size: clamp(1.5rem, 5vw, 1.85rem);
+  }
+
+  /* Form Elements: Set minimum font-size to 16px to stop iOS Safari zoom */
+  .form-input, .form-select, .form-textarea {
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  /* Button touch accessibility */
+  .btn {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .btn-sm {
+    min-height: 38px;
+  }
+
+  /* Featured Student Card */
+  .featured-student-box {
+    grid-template-columns: 1fr;
+    border-radius: var(--radius-md);
+  }
+
+  .featured-img-wrap {
+    min-height: 200px;
+    max-height: 280px;
+  }
+
+  .featured-info {
+    padding: 24px 18px;
+  }
+
+  .featured-info h3 {
+    font-size: 1.45rem !important;
+  }
+
+  /* Student Radio Featured Card */
+  .radio-featured-card {
+    padding: 24px 18px;
+    gap: 20px;
+  }
+
+  /* Mobile Drawer */
+  .mobile-menu-drawer {
+    box-shadow: var(--shadow-lg);
+    border-bottom: 2px solid var(--border-subtle);
+  }
+
+  .mobile-nav-link {
+    display: block;
+    padding: 12px 14px;
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    transition: background 0.15s;
+  }
+  .mobile-nav-link:hover, .mobile-nav-link.active {
+    background: var(--bg-subtle);
+    color: var(--accent-primary);
+  }
+}
+
+/* Small Smartphone Screen Adjustments (<= 480px) */
+@media (max-width: 480px) {
+  .container, .container-narrow {
+    padding: 0 14px;
+  }
+
+  .nav-inner {
+    height: 64px;
+  }
+
+  .brand-wordmark {
+    font-size: 1.45rem;
+  }
+
+  .brand-attribution {
+    font-size: 0.64rem;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+    width: 100%;
+    gap: 12px;
+  }
+
+  .hero-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .form-card {
+    padding: 20px 14px;
+  }
+
+  .cta-banner {
+    padding: 28px 16px;
+  }
+
+  .cta-banner h2 {
+    font-size: 1.45rem !important;
+  }
+
+  .footer-grid {
+    gap: 32px;
+  }
+}
+
+/* Ultra Narrow Screen Safety (<= 360px: iPhone SE 1st gen, Galaxy Fold outer screen) */
 @media (max-width: 360px) {
   .container {
-    padding: 0 12px;
+    padding: 0 10px;
   }
+
+  .brand-attribution {
+    display: none; /* Hide small subtext to keep header clean and prevent line break */
+  }
+
   .hero-tagline {
-    font-size: 2rem;
+    font-size: 1.7rem;
   }
+
   .btn {
-    width: 100%;
+    padding: 8px 14px;
+    font-size: 0.85rem;
   }
 }

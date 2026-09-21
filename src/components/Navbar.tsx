@@ -68,7 +68,7 @@ export const Navbar: React.FC = () => {
           </nav>
 
           <div className="nav-actions">
-            <Link to="/get-featured" className="btn btn-primary btn-sm">
+            <Link to="/get-featured" className="btn btn-primary btn-sm nav-cta-desktop">
               <span>GET FEATURED</span>
               <ArrowUpRight size={16} />
             </Link>

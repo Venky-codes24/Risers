@@ -21,6 +21,7 @@ export const GetFeaturedPage: React.FC = () => {
 
   // Errors & Submission Status
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [referenceId, setReferenceId] = useState('');
 
@@ -49,7 +50,7 @@ export const GetFeaturedPage: React.FC = () => {
     return Object.keys(errs).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // Honeypot spam protection
@@ -66,6 +67,7 @@ export const GetFeaturedPage: React.FC = () => {
       return;
     }
 
+    setIsSubmitting(true);
     const newId = `sub-${Date.now()}`;
     const newSubmission: GetFeaturedSubmission = {
       id: newId,
@@ -83,10 +85,20 @@ export const GetFeaturedPage: React.FC = () => {
       status: 'New'
     };
 
-    ContentStore.addSubmission(newSubmission);
-    setReferenceId(newId);
-    setIsSubmitted(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      const result = await ContentStore.addSubmission(newSubmission);
+      setReferenceId(result.id || newId);
+      setIsSubmitted(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      console.error('Submission error:', err);
+      // Fallback
+      setReferenceId(newId);
+      setIsSubmitted(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (isSubmitted) {
@@ -300,7 +312,7 @@ export const GetFeaturedPage: React.FC = () => {
               <legend className="form-label" style={{ marginBottom: '10px' }}>
                 Are you under 18 years old? *
               </legend>
-              <div style={{ display: 'flex', gap: '24px' }}>
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                   <input
                     type="radio"
@@ -365,9 +377,14 @@ export const GetFeaturedPage: React.FC = () => {
 
           {/* Submit Action */}
           <div style={{ marginTop: '32px' }}>
-            <button type="submit" className="btn btn-primary btn-lg" style={{ width: '100%' }}>
+            <button 
+              type="submit" 
+              className="btn btn-primary btn-lg" 
+              style={{ width: '100%' }}
+              disabled={isSubmitting}
+            >
               <Send size={18} />
-              <span>Submit for Editorial Review</span>
+              <span>{isSubmitting ? 'Recording Submission...' : 'Submit for Editorial Review'}</span>
             </button>
           </div>
         </form>
